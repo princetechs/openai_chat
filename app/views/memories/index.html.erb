@@ -1,0 +1,204 @@
+<div class="container mt-4">
+  <div class="row">
+    <div class="col-12">
+      <h1 class="mb-4">Memory Dashboard</h1>
+      
+      <!-- Memory Statistics -->
+      <div class="row mb-4">
+        <div class="col-md-3">
+          <div class="card bg-primary text-white">
+            <div class="card-body">
+              <h5 class="card-title">User Memories</h5>
+              <h2 class="mb-0"><%= @memory_stats[:user_memories] || 0 %></h2>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card bg-success text-white">
+            <div class="card-body">
+              <h5 class="card-title">Session Memories</h5>
+              <h2 class="mb-0"><%= @memory_stats[:session_memories] || 0 %></h2>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card bg-info text-white">
+            <div class="card-body">
+              <h5 class="card-title">Total Memories</h5>
+              <h2 class="mb-0"><%= @memory_stats[:total_memories] || 0 %></h2>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card bg-warning text-white">
+            <div class="card-body">
+              <h5 class="card-title">Last Extraction</h5>
+              <p class="mb-0"><%= @memory_stats[:last_extraction] ? time_ago_in_words(Time.parse(@memory_stats[:last_extraction])) + " ago" : "Never" %></p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- User Memories -->
+      <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <h3>User Memories (Persistent)</h3>
+          <button class="btn btn-danger btn-sm" onclick="clearUserMemories()">Clear All User Memories</button>
+        </div>
+        <div class="card-body">
+          <% if @user_memories&.any? %>
+            <% @user_memories.each do |memory| %>
+              <div class="memory-item mb-3 p-3 border rounded">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div class="flex-grow-1">
+                    <p class="mb-1"><strong><%= memory['content'] %></strong></p>
+                    <small class="text-muted">
+                      Category: <%= memory['category']&.humanize || 'Unknown' %> | 
+                      Type: <%= memory['type']&.humanize || 'User' %> |
+                      Created: <%= memory['timestamp'] ? time_ago_in_words(Time.parse(memory['timestamp'])) + " ago" : "Unknown" %>
+                    </small>
+                  </div>
+                  <span class="badge badge-<%= memory['importance'] == 'high' ? 'danger' : memory['importance'] == 'medium' ? 'warning' : 'secondary' %> ml-2">
+                    <%= memory['importance']&.humanize || 'Unknown' %>
+                  </span>
+                </div>
+              </div>
+            <% end %>
+          <% else %>
+            <p class="text-muted">No user memories found.</p>
+          <% end %>
+        </div>
+      </div>
+
+      <!-- Session Memories -->
+      <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <h3>Session Memories (Temporary)</h3>
+          <button class="btn btn-warning btn-sm" onclick="clearSessionMemories()">Clear Session Memories</button>
+        </div>
+        <div class="card-body">
+          <% if @session_memories&.any? %>
+            <% @session_memories.each do |memory| %>
+              <div class="memory-item mb-3 p-3 border rounded bg-light">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div class="flex-grow-1">
+                    <p class="mb-1"><strong><%= memory['content'] %></strong></p>
+                    <small class="text-muted">
+                      Category: <%= memory['category']&.humanize || 'Unknown' %> | 
+                      Type: <%= memory['type']&.humanize || 'Session' %> |
+                      Created: <%= memory['timestamp'] ? time_ago_in_words(Time.parse(memory['timestamp'])) + " ago" : "Unknown" %>
+                    </small>
+                  </div>
+                  <span class="badge badge-<%= memory['importance'] == 'high' ? 'danger' : memory['importance'] == 'medium' ? 'warning' : 'secondary' %> ml-2">
+                    <%= memory['importance']&.humanize || 'Unknown' %>
+                  </span>
+                </div>
+              </div>
+            <% end %>
+          <% else %>
+            <p class="text-muted">No session memories found.</p>
+          <% end %>
+        </div>
+      </div>
+
+      <!-- Memory Management Actions -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <h3>Memory Management</h3>
+        </div>
+        <div class="card-body">
+          <div class="row">
+            <div class="col-md-6">
+              <h5>Export Memories</h5>
+              <p class="text-muted">Download your memories as a JSON file for backup.</p>
+              <a href="/memories/export.json" class="btn btn-primary" download>Export All Memories</a>
+            </div>
+            <div class="col-md-6">
+              <h5>Import Memories</h5>
+              <%= form_with url: import_memories_path, multipart: true, local: true do |form| %>
+                <div class="form-group">
+                  <%= form.file_field :memory_file, accept: ".json", class: "form-control-file" %>
+                  <small class="form-text text-muted">Upload a JSON file containing exported memories.</small>
+                </div>
+                <%= form.submit "Import Memories", class: "btn btn-success" %>
+              <% end %>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function clearUserMemories() {
+  if (confirm('Are you sure you want to clear all user memories? This action cannot be undone.')) {
+    fetch('/memories/clear_user', {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+      }
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.status === 'success') {
+        location.reload();
+      } else {
+        alert('Failed to clear user memories');
+      }
+    })
+    .catch(error => {
+      console.error('Error:', error);
+      alert('An error occurred while clearing memories');
+    });
+  }
+}
+
+function clearSessionMemories() {
+  if (confirm('Are you sure you want to clear session memories?')) {
+    fetch('/memories/clear_session', {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+      }
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.status === 'success') {
+        location.reload();
+      } else {
+        alert('Failed to clear session memories');
+      }
+    })
+    .catch(error => {
+      console.error('Error:', error);
+      alert('An error occurred while clearing memories');
+    });
+  }
+}
+</script>
+
+<style>
+.border-left-primary {
+  border-left: 4px solid #007bff !important;
+}
+
+.border-left-info {
+  border-left: 4px solid #17a2b8 !important;
+}
+
+.badge-danger {
+  background-color: #dc3545;
+}
+
+.badge-warning {
+  background-color: #ffc107;
+  color: #212529;
+}
+
+.badge-secondary {
+  background-color: #6c757d;
+}
+</style>

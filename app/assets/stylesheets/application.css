@@ -1,0 +1,49 @@
+/*
+ * This is a manifest file that'll be compiled into application.css, which will include all the files
+ * listed below.
+ *
+ * Any CSS (and SCSS, if configured) file within this directory, subdirectories, or in vendor/assets
+ * will be included in the compiled output.
+ */
+
+/* Custom styles for the chat application */
+body {
+  background-color: #f8f9fa;
+}
+
+.chat-messages {
+  display: flex;
+  flex-direction: column;
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 1rem;
+}
+
+.user-message .message-content {
+  border-radius: 18px 18px 0 18px !important;
+}
+
+.assistant-message .message-content {
+  border-radius: 0 18px 18px 18px !important;
+}
+
+.message-content {
+  padding: 12px 16px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.navbar-brand {
+  font-weight: 600;
+}
+
+.card {
+  border: none;
+  border-radius: 10px;
+}
+
+.card-header {
+  border-radius: 10px 10px 0 0 !important;
+}
