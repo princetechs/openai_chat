@@ -35,7 +35,7 @@ Raix.configure do |config|
     
     # Set the OpenRouter client to our dummy client
     config.openrouter_client = dummy_client.new
-    config.openai_client = OpenAI::Client.new(access_token: ENV.fetch("OAI_ACCESS_TOKEN", "")) do |f|
+    config.openai_client = OpenAI::Client.new(access_token: ENV.fetch("OPENAI_API_KEY", "")) do |f|
       f.request :retry, retry_options
       f.response :logger, Logger.new($stdout), { headers: true, bodies: true, errors: true } do |logger|
         logger.filter(/(Bearer) (\S+)/, '\1[REDACTED]')

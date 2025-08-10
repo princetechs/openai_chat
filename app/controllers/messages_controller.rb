@@ -1,30 +1,27 @@
 class MessagesController < ApplicationController
-  # Helper method for current user (since we don't have authentication yet)
   def current_user
-    nil # Return nil for now, can be updated when authentication is added
+    nil # placeholder until authentication
   end
-  # Define the constant once, at class level
-  CLEAN_CHAT_SYSTEM_PROMPT = <<~PROMPT
-    You are a helpful AI assistant. Respond naturally and conversationally to the user's messages.
-    
-    Guidelines:
-    - Be helpful, friendly, and engaging
-    - Provide accurate and relevant information
-    - Use any provided memory context to personalize your responses
-    - Respond ONLY with your conversational reply - no JSON, no metadata, no technical artifacts
-    - Keep responses concise but informative
-    
-    Your response should be natural conversation only.
+
+  SYSTEM_PROMPT = <<~PROMPT
+    You are a helpful AI assistant with memory capabilities.
+    Respond naturally to the user and extract factual, specific information for memory storage.
+
+    RULES:
+    - Friendly, concise, informative.
+    - Personalize using provided memory context.
+    - Output must be a single valid JSON object:
+      {"response":"<assistant reply>","memories":[{"content":"<fact>","category":"personal_facts|preferences|goals|events|skills|projects|name|friends|family","importance":"high|medium|low","type":"user|session"}]}
+    - If no memories: {"response":"<assistant reply>","memories":[]}
+    - No text before/after JSON. No markdown.
   PROMPT
 
   def create
     @chat = Chat.find(params[:chat_id])
-    @message = @chat.messages.new(message_params)
-    @message.role = Message::ROLE_USER
+    @message = @chat.messages.new(message_params.merge(role: Message::ROLE_USER))
 
     if @message.save
       generate_ai_response
-
       respond_to do |format|
         format.turbo_stream
         format.html { redirect_to @chat }
@@ -42,107 +39,91 @@ class MessagesController < ApplicationController
 
   def generate_ai_response
     begin
-      # Create AI memory service
       memory_service = AiMemory::MemoryService.new(
         user_id: current_user&.id || session[:user_id] || "anonymous_#{session.id}",
         session_id: session.id
       )
-      
-      # Get chat messages for context
-      chat_messages = @chat.messages.order(:created_at).map do |msg|
-        { role: msg.role, content: msg.content }
-      end
-      
-      # Get relevant memories for context
-      last_message = chat_messages.last&.dig(:content)
-      memories = memory_service.get_relevant_memories(
-        query: last_message,
-        limit: 10
+
+      # Prepare chat history
+      chat_messages = @chat.messages.order(:created_at).map { |m| { role: m.role, content: m.content } }
+      last_message  = chat_messages.last&.dig(:content)
+
+      # Get relevant memory context
+      memory_context = memory_service.format_memories_for_prompt(
+        memory_service.get_relevant_memories(query: last_message, limit: 10)
       )
-      memory_context = memory_service.format_memories_for_prompt(memories)
-      
-      # Enhanced system prompt with memory context
-      enhanced_prompt = build_enhanced_system_prompt(memory_context)
-      
-      # Create chat assistant with enhanced prompt
-      assistant = ChatAssistant.new(enhanced_prompt, chat_messages)
-      
-      # Generate response
-      raw_content = assistant.chat_completion
-      
-      if raw_content.present?
-        # Parse response to separate conversational content from memory data
-        parsed_response = parse_ai_response(raw_content)
-        display_content = parsed_response[:response]
-        
-        # Create assistant message with clean response only
-        final_content = display_content
-        
-        # Add debug info if enabled (for developers only)
-        if show_memory_debug? && parsed_response[:debug_info]
-          final_content += "\n\n--- DEBUG INFO ---\n#{parsed_response[:debug_info].to_json}"
-        end
-        
-        @chat.messages.create(
-          content: final_content,
-          role: Message::ROLE_ASSISTANT
-        )
-        
-        # Extract and store memories in background (completely silent)
-        Thread.new do
-          begin
-            full_conversation = chat_messages + [{ role: 'assistant', content: display_content }]
-            memory_service.extract_and_store_memories(full_conversation, display_content)
-          rescue => e
-            Rails.logger.error("Background memory extraction error: #{e.message}")
-          end
-        end
-      else
-        @chat.messages.create(
-          content: "I'm sorry, I couldn't generate a response at this time.",
-          role: Message::ROLE_ASSISTANT
-        )
-      end
+
+      # Build assistant
+      assistant = ChatAssistant.new(build_system_prompt(memory_context), chat_messages)
+
+      # Request with json_object format
+      raw_content = assistant.chat_completion(
+        params: {
+          response_format: { type: "json_object" }
+        }
+      )
+
+      handle_ai_response(raw_content, memory_service)
     rescue => e
-      Rails.logger.error("Optimized chat error: #{e.message}")
+      Rails.logger.error("Chat error: #{e.message}")
       @chat.messages.create(
-        content: "I'm sorry, there was an error processing your request. Please try again later.",
+        content: "I'm sorry, something went wrong. Please try again later.",
         role: Message::ROLE_ASSISTANT
       )
     end
   end
-  
-  private
-  
-  def parse_ai_response(raw_content)
-    # Since we're using clean chat prompt, the response should be pure conversational content
-    # Add debug info if requested by developers
-    {
-      response: raw_content.strip,
-      memory_data: nil,
-      debug_info: show_memory_debug? ? { raw_content: raw_content, timestamp: Time.current } : nil
-    }
-  end
-  
-  def show_memory_debug?
-    # Enable memory debug mode via parameter or environment
-    params[:show_memory_response] == 'true' || 
-    Rails.env.development? && ENV['SHOW_MEMORY_DEBUG'] == 'true'
-  end
-  
-  def build_enhanced_system_prompt(memory_context)
-    base_prompt = CLEAN_CHAT_SYSTEM_PROMPT
-    
-    if memory_context.present?
-      <<~ENHANCED_PROMPT
-        #{base_prompt}
-        
-        #{memory_context}
-        
-        Use this context to provide personalized responses. Reference relevant memories naturally without explicitly mentioning that you're using stored information.
-      ENHANCED_PROMPT
-    else
-      base_prompt
+
+  def handle_ai_response(raw_content, memory_service)
+    unless raw_content.present?
+      return @chat.messages.create(
+        content: "I'm sorry, I couldn't generate a response right now.",
+        role: Message::ROLE_ASSISTANT
+      )
     end
+
+    parsed = parse_ai_response(raw_content)
+
+    # Save assistant's main reply
+    @chat.messages.create(content: parsed[:response], role: Message::ROLE_ASSISTANT)
+
+    # Store any memories
+    if parsed[:memory_data].present?
+      memory_service.store_memories(parsed[:memory_data])
+      Rails.logger.info("Stored #{parsed[:memory_data].size} memories")
+
+      if show_memory_debug?
+        Rails.logger.debug("MEMORY DEBUG: #{parsed[:memory_data].to_json}")
+        # Uncomment to show in frontend:
+        # @chat.messages.create(content: "--- DEBUG ---\n#{parsed[:memory_data].to_json}", role: Message::ROLE_SYSTEM)
+      end
+    end
+  end
+
+  def parse_ai_response(raw)
+    parsed = JSON.parse(raw.strip)
+    {
+      response: parsed['response'],
+      memory_data: parsed['memories']
+    }
+  rescue JSON::ParserError => e
+    Rails.logger.error("JSON parsing failed: #{e.message}")
+    { response: raw.strip, memory_data: nil }
+  end
+
+  def build_system_prompt(memory_context)
+    if memory_context.present?
+      <<~PROMPT
+        #{SYSTEM_PROMPT}
+
+        MEMORY CONTEXT:
+        #{memory_context}
+      PROMPT
+    else
+      SYSTEM_PROMPT
+    end
+  end
+
+  def show_memory_debug?
+    params[:debug] == 'true' || (Rails.env.development? && ENV['SHOW_MEMORY_DEBUG'] == 'true')
   end
 end
